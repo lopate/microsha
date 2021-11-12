@@ -17,8 +17,10 @@
 #include <algorithm>
 #include <string.h>
 #include <signal.h>
-
-
+#include <sys/resource.h>
+#include <time.h>
+#include <sstream>
+#include <iomanip>
 struct regexNode{
     char word[2];
     std::vector<size_t> next;
@@ -354,6 +356,43 @@ void doGlob(const std::string& argve, std::vector<char*>& args){
 	*/
 }
 
+char executearg(const Command& cmd, int (&fd)[2][2], const std::vector<char*>& args, size_t index, size_t i){
+
+	if (i) {
+		close(fd[0][1]);
+		dup2(fd[0][0],0);
+	}
+	if (i != cmd.progs.size() - 1){
+		close(fd[1][0]);
+		dup2(fd[1][1],1);
+	}
+	for(auto& e: cmd.progs[i].descs){
+		if(e.rwx == 'r'){
+			int desc = open((char*)e.file.c_str(), O_RDONLY);
+			if(desc < 0){
+				write(2, "Ошибка открытия файла", 41);
+				return 2;
+			}else{
+				dup2(desc, e.desc);
+			}
+			
+		} else if(e.rwx == 'w'){
+			int desc = open((char*)e.file.c_str(), O_WRONLY | O_CREAT, S_IWRITE | S_IREAD);
+			if(desc < 0){
+				write(2, "Ошибка открытия файла", 41);
+				return 2;
+			} else{
+				dup2(desc, e.desc);
+			}
+		}
+	}
+
+	execvp(args[index], &args[index]);
+	write(2, args[index], strlen(args[index]));
+	write(2, ": команда не найдена\n", 38);
+	return -1;
+}
+
 char executecmd(const Command& cmd){
 	int fd[2][2];
 	fd[0][0] = 0;
@@ -361,7 +400,7 @@ char executecmd(const Command& cmd){
 	fd[1][0] = 0;
 	fd[1][1] = 1;
 	for(int i = 0; i < cmd.progs.size(); i++){
-		
+		clock_t time = clock();
 		//pipe(fd[0]);
 		fd[0][0] = fd[1][0];
 		fd[0][1] = fd[1][1];
@@ -389,37 +428,10 @@ char executecmd(const Command& cmd){
 		for(auto& argve: s_args){
 			args.push_back((char*)argve.c_str());
 		}
+		args.push_back(nullptr);
 		pid_t pid = fork();
 		if (pid == 0) {
-			if (i) {
-				close(fd[0][1]);
-				dup2(fd[0][0],0);
-			}
-			if (i != cmd.progs.size() - 1){
-				close(fd[1][0]);
-				dup2(fd[1][1],1);
-			}
-			for(auto& e: cmd.progs[i].descs){
-				if(e.rwx == 'r'){
-					int desc = open((char*)e.file.c_str(), O_RDONLY);
-					if(desc < 0){
-						write(2, "Ошибка открытия файла", 41);
-						return 2;
-					}else{
-						dup2(desc, e.desc);
-					}
-					
-				} else if(e.rwx == 'w'){
-					int desc = open((char*)e.file.c_str(), O_WRONLY | O_CREAT, S_IWRITE | S_IREAD);
-					if(desc < 0){
-						write(2, "Ошибка открытия файла", 41);
-						return 2;
-					} else{
-						dup2(desc, e.desc);
-					}
-				}
-			}
-			args.push_back(nullptr);
+			
 			if (cmd.progs[i].progName == "pwd"){
 				printf("%s\n", getDir().c_str());
 			}
@@ -430,10 +442,34 @@ char executecmd(const Command& cmd){
 				}
 				write(1, args[args.size()], strlen(args[args.size()]));
 			}
+			if(cmd.progs[i].progName == "time"){
+				pid_t pid = fork();
+				if(pid == 0){
+					size_t j;
+					for(j = 0; j < args.size() && s_args[j] == "time"; j++) {}
+					if(j + 1 < args.size()){
+						return executearg(cmd, fd, args, j, i);
+					}
+					return -1;
+				}else{
+					rusage chusage;
+					int status;
+					wait(&status);
+				
+					if ( getrusage(RUSAGE_CHILDREN, &chusage) != -1 ){
+						std::ostringstream ststm;
+						ststm << std::fixed<<std::setprecision(3);
+						ststm << "all: " << -((double)(clock() - time))/ CLOCKS_PER_SEC << "s"  <<
+						 "\nsys : " << (double)chusage.ru_stime.tv_sec + (double)chusage.ru_stime.tv_usec / 1000000.0 << "s"
+						  << "\nuser" << (double)chusage.ru_utime.tv_sec + (double)chusage.ru_utime.tv_usec / 1000000.0 << "s" << "\n";
+						write(2, ststm.str().c_str(), ststm.str().size());
+					}
+				}
+				
+			}
 			if(!(cmd.progs[i].progName == "pwd" || cmd.progs[i].progName == "cd" || cmd.progs[i].progName == "echo"|| cmd.progs[i].progName == "set" || cmd.progs[i].progName == "time")){
-				execvp(args[0], &args[0]);
-				write(2, args[0], strlen(args[0]));
-				write(2, ": команда не найдена\n", 38);
+				write(2, "not time\n", 1);
+				executearg(cmd, fd, args, 0, i);
 			}
 			return -1;
 		}
@@ -455,12 +491,21 @@ char executecmd(const Command& cmd){
 	return 0;
 }
 
+void printgreating(){
+	if(geteuid() == 0){
+		printf("\n%s> ", getDir().c_str());
+		fflush(stdout);
+	}else{
+		printf("\n%s! ", getDir().c_str());
+		fflush(stdout);
+	}
+}
+
 char startlistening(Command& cmd) {
 	char ret = 1;
 	while(ret){
 		std::string input;
-		printf("%s:", getDir().c_str());
-		fflush(stdout);
+		printgreating();
 		ret = getinput(input);
 		if(ret){
 			parcecommand(input, cmd);
@@ -475,8 +520,7 @@ char startlistening(Command& cmd) {
 
 void _siginthandler(int signum){
 	if(signum == SIGINT){
-		printf("\n%s:", getDir().c_str());
-		fflush(stdout);
+		printgreating();
 	}
 }
 int main() {
