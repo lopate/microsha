@@ -12,12 +12,161 @@
 #include <sys/wait.h>
 #include <limits.h>
 #include <glob.h>
+#include <time.h>
+#include <dirent.h>
+#include <algorithm>
+#include <string.h>
+#include <signal.h>
+
+
+struct regexNode{
+    char word[2];
+    std::vector<size_t> next;
+};
+
+struct regexState{
+    std::vector<size_t> posible_states;
+    regexState(int arg){
+        posible_states.push_back(arg);
+    }
+    regexState(){};
+};
+
+
+struct regex{
+    std::vector<regexNode> words;
+    void create(std::string _regex){
+        char last = '\0';
+        for(auto& e: _regex){
+            if(!((e == '*') && (last == '*'))){
+                
+                if(e == '*'){
+                    if(words.size() > 1){
+                        words[words.size() - 1].next.push_back(words.size() + 1);
+                    }
+                    words.push_back({{e, 0}, {words.size(), words.size() +1}});
+                    
+                }else{
+                    words.push_back({{e, 0}, {words.size() + 1}});
+                }
+            }
+            last = e;
+        }
+    }
+};
+
+void vectoradd(std::vector<size_t>& a, const std::vector<size_t>& b){
+    for(auto& e : b){
+        a.push_back(e);
+    }
+}
+
+int regexGo(const regex& _regex, const regexState& oldstate, regexState& newstate,const std::string& word){
+    regexState _oldstate, _newstate;
+    _oldstate.posible_states = oldstate.posible_states;
+    char last = '/';
+    for(auto& symb: word){
+        for(auto& e: _oldstate.posible_states){
+            if(e != _regex.words.size()){
+                if(_regex.words[e].word[0] == '*'){
+                    if(!(symb == '.' && last =='/') ){
+                        vectoradd(_newstate.posible_states, _regex.words[e].next);
+                    }
+                }else if(_regex.words[e].word[0] == '?'){
+                    vectoradd(_newstate.posible_states, _regex.words[e].next);
+                }
+                else{
+                    if(_regex.words[e].word[0] == symb) {
+                        vectoradd(_newstate.posible_states, _regex.words[e].next);
+                    }
+                    
+                }
+            }
+            
+        }
+        last = symb;
+        _oldstate.posible_states = _newstate.posible_states;
+        _newstate.posible_states.resize(0);
+    }
+    newstate.posible_states = _oldstate.posible_states;
+    return 0;
+    
+}
+
+int regexIsTerminal(const regex& _regex, const regexState& state){
+    for(auto& e: state.posible_states){
+        if(e == _regex.words.size()){
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int regexCont(const regex& _regex, const regexState& state){
+    return state.posible_states.size() == 0;
+}
+
+
+void _mglob(const std::string& pathl,const std::string& pathr, const std::string name, std::vector<std::string> &ret, regex& _regex, regexState state){
+	DIR *dir = opendir((pathl+ pathr+"/" + name).c_str());
+	
+    if(regexCont(_regex, state)){
+		closedir(dir);
+        return;
+    }
+	if(dir == nullptr){
+		closedir(dir);
+		return;
+	}
+	std::string nextpathr = pathr;
+    if(name.size()){
+        nextpathr += name + "/";
+    }
+    for (dirent *cdir = readdir(dir); cdir != nullptr; cdir = readdir(dir)){
+		regexState nextstate;
+        std::string nextname(cdir->d_name);
+        regexGo(_regex, state, nextstate, nextname);
+        if(regexIsTerminal(_regex, nextstate) ){
+            ret.push_back(nextpathr + nextname);
+        }else{
+            regexState _nextstate;
+            regexGo(_regex, nextstate, _nextstate, "/");
+            _mglob(pathl, nextpathr, nextname, ret, _regex, _nextstate);
+        }
+        
+    }
+    closedir(dir);
+}
+
 
 std::string getDir(){
 	char buff[PATH_MAX];
 	getcwd(buff, PATH_MAX);
 	return std::string(buff);
 }
+
+
+void mglob(std::vector<std::string> &ret, const std::string& mask){
+    regex expr;
+    expr.create(mask);
+    DIR *dir;
+    if(mask.size() == 0){
+        return;
+    }
+    if(mask[0] == '/'){
+        dir = opendir("/");
+        regexState state(1);
+        _mglob("/","/" ,"", ret, expr, state);
+    }   else{
+        dir = opendir("./");
+        regexState state(0);
+        _mglob("./","", "", ret, expr, state);
+    }
+    
+    closedir(dir);
+}
+
+
 struct NodeDesc {
 	size_t desc;
 	std::string file;
@@ -41,13 +190,13 @@ struct Command {
 
 
 int getinput(std::string& input) {
-	const size_t buf_size = 1024; //
+	const size_t buf_size = 4096; //
 	
 	char* buf = (char*)malloc(buf_size * sizeof(char));
 	size_t str_cnt = 1;
 	buf[str_cnt - 1] = 'a';
 	while (str_cnt && !(buf[str_cnt - 1] == '\n' || buf[str_cnt -1 ] == '\0')) {
-		str_cnt = read(0, buf, 1024);
+		str_cnt = read(0, buf, buf_size);
 		if(str_cnt != 0){
 			input.assign(buf, str_cnt);
 		}/*else{
@@ -181,7 +330,12 @@ char parcecommand(const std::string& input, Command& cmd) {
 }
 
 void doGlob(const std::string& argve, std::vector<char*>& args){
-	glob_t glob_result;
+	std::vector<std::string> glob_result;
+	mglob(glob_result, argve);
+	for(int i = 0; i < glob_result.size(); i++){
+		args.push_back(strdup(glob_result[i].c_str()));
+	}
+	/*glob_t glob_result;
 	glob(argve.c_str(), GLOB_TILDE, NULL, &glob_result);
 	glob_result.gl_pathv;
 	for(int i = 0; i < glob_result.gl_pathc; i++){
@@ -190,10 +344,14 @@ void doGlob(const std::string& argve, std::vector<char*>& args){
 	//Если поиск по маске ничего не дал, то воспринимаем ее как аргумент
 	if(!glob_result.gl_pathc) args.push_back((char*)argve.c_str());
 	printf("Glob result:\n");
+	*/
+	/*
 	for(auto& e: args){
 		printf("%s\n", e);
 	}
+	
 	printf("------------------\n\n");
+	*/
 }
 
 char executecmd(const Command& cmd){
@@ -210,6 +368,7 @@ char executecmd(const Command& cmd){
 		if(i != cmd.progs.size() - 1){
 			pipe(fd[1]);
 		}
+		std::vector<std::string> s_args;
 		std::vector<char*> args;
 		for(auto& argve: cmd.progs[i].argv){
 			//Проверяем, нужно ли заменить маску на массив аргументов
@@ -218,15 +377,18 @@ char executecmd(const Command& cmd){
 				if(e == '?' || e == '*') to_globing = true;
 			}
 			if (to_globing){
-				doGlob(argve, args);
+				
+				mglob(s_args, argve);
 			}
 			else{
-				args.push_back((char*)argve.c_str());
+				s_args.push_back(argve);
 			}
 			
 			
 		}
-
+		for(auto& argve: s_args){
+			args.push_back((char*)argve.c_str());
+		}
 		pid_t pid = fork();
 		if (pid == 0) {
 			if (i) {
@@ -242,6 +404,7 @@ char executecmd(const Command& cmd){
 					int desc = open((char*)e.file.c_str(), O_RDONLY);
 					if(desc < 0){
 						write(2, "Ошибка открытия файла", 41);
+						return 2;
 					}else{
 						dup2(desc, e.desc);
 					}
@@ -250,7 +413,8 @@ char executecmd(const Command& cmd){
 					int desc = open((char*)e.file.c_str(), O_WRONLY | O_CREAT, S_IWRITE | S_IREAD);
 					if(desc < 0){
 						write(2, "Ошибка открытия файла", 41);
-					}else{
+						return 2;
+					} else{
 						dup2(desc, e.desc);
 					}
 				}
@@ -259,8 +423,17 @@ char executecmd(const Command& cmd){
 			if (cmd.progs[i].progName == "pwd"){
 				printf("%s\n", getDir().c_str());
 			}
-			if(!(cmd.progs[i].progName == "pwd" || cmd.progs[i].progName == "cd")){
+			if (cmd.progs[i].progName == "echo"){
+				for(size_t i = 1; i < args.size() - 1; i++){
+					write(1, args[i], strlen(args[i]));
+					write(1, " ", 1);
+				}
+				write(1, args[args.size()], strlen(args[args.size()]));
+			}
+			if(!(cmd.progs[i].progName == "pwd" || cmd.progs[i].progName == "cd" || cmd.progs[i].progName == "echo"|| cmd.progs[i].progName == "set" || cmd.progs[i].progName == "time")){
 				execvp(args[0], &args[0]);
+				write(2, args[0], strlen(args[0]));
+				write(2, ": команда не найдена\n", 38);
 			}
 			return -1;
 		}
@@ -291,8 +464,8 @@ char startlistening(Command& cmd) {
 		ret = getinput(input);
 		if(ret){
 			parcecommand(input, cmd);
-			if (executecmd(cmd) == -1){
-				exit(0);
+			if (executecmd(cmd)){
+				return 1;
 			}
 		}
 		
@@ -300,9 +473,17 @@ char startlistening(Command& cmd) {
 	return 0;
 }
 
-
+void _siginthandler(int signum){
+	if(signum == SIGINT){
+		printf("\n%s:", getDir().c_str());
+		fflush(stdout);
+	}
+}
 int main() {
 	Command cmd;
+	signal(SIGINT, _siginthandler);
+
 	startlistening(cmd);
+
 	return 0;
 }
