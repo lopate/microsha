@@ -110,7 +110,7 @@ int regexCont(const regex& _regex, const regexState& state){
 
 
 void _mglob(const std::string& pathl,const std::string& pathr, const std::string name, std::vector<std::string> &ret, regex& _regex, regexState state){
-	DIR *dir = opendir((pathl+ pathr+"/" + name).c_str());
+	DIR *dir = opendir((pathl + pathr + "/" + name).c_str());
 	
     if(regexCont(_regex, state)){
 		closedir(dir);
@@ -330,10 +330,11 @@ char parcecommand(const std::string& input, Command& cmd) {
 	parcetunel(input,i, cmd);
 	return 0;
 }
-
+/*
 void doGlob(const std::string& argve, std::vector<char*>& args){
 	std::vector<std::string> glob_result;
 	mglob(glob_result, argve);
+	sort(glob_result.begin(), glob_result.end());
 	for(int i = 0; i < glob_result.size(); i++){
 		args.push_back(strdup(glob_result[i].c_str()));
 	}
@@ -354,7 +355,7 @@ void doGlob(const std::string& argve, std::vector<char*>& args){
 	
 	printf("------------------\n\n");
 	*/
-}
+//}
 
 char executearg(const Command& cmd, int (&fd)[2][2], const std::vector<char*>& args, size_t index, size_t i){
 
@@ -411,13 +412,20 @@ char executecmd(const Command& cmd){
 		std::vector<char*> args;
 		for(auto& argve: cmd.progs[i].argv){
 			//Проверяем, нужно ли заменить маску на массив аргументов
+			std::vector<std::string> glob_result;
 			bool to_globing = false;
 			for(auto e: argve){
 				if(e == '?' || e == '*') to_globing = true;
 			}
 			if (to_globing){
-				
-				mglob(s_args, argve);
+				mglob(glob_result, argve);
+				sort(glob_result.begin(), glob_result.end());
+				if(glob_result.size() == 0){
+					glob_result.push_back(argve);
+				}
+				for(auto& e:glob_result){
+					s_args.push_back(e);
+				}
 			}
 			else{
 				s_args.push_back(argve);
