@@ -21,6 +21,9 @@
 #include <time.h>
 #include <sstream>
 #include <iomanip>
+
+size_t processcount = 0;
+
 struct regexNode{
     char word[2];
     std::vector<size_t> next;
@@ -441,6 +444,7 @@ char executecmd(const Command& cmd){
 			args.push_back((char*)argve.c_str());
 		}
 		args.push_back(nullptr);
+		processcount++;
 		pid_t pid = fork();
 		if (pid == 0) {
 			
@@ -510,6 +514,7 @@ char executecmd(const Command& cmd){
 	for(int i = 0; i < cmd.progs.size(); i++){
 		int status;
 		wait(&status);
+		processcount--;
 	}
 	printf("\n");
 	return 0;
@@ -543,7 +548,7 @@ char startlistening(Command& cmd) {
 }
 
 void _siginthandler(int signum){
-	if(signum == SIGINT){
+	if(signum == SIGINT && processcount == 0){
 		printgreating();
 	}
 }
