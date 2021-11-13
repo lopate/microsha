@@ -70,7 +70,7 @@ int regexGo(const regex& _regex, const regexState& oldstate, regexState& newstat
     for(auto& symb: word){
         for(auto& e: _oldstate.posible_states){
             if(e != _regex.words.size()){
-                if(_regex.words[e].word[0] == '*'){
+                if(_regex.words[e].word[0] == '*' && symb != '/'){
                     if(!(symb == '.' && last =='/') ){
                         vectoradd(_newstate.posible_states, _regex.words[e].next);
                     }
@@ -378,7 +378,7 @@ char executearg(const Command& cmd, int (&fd)[2][2], const std::vector<char*>& a
 			}
 			
 		} else if(e.rwx == 'w'){
-			int desc = open((char*)e.file.c_str(), O_WRONLY | O_CREAT, S_IWRITE | S_IREAD);
+			int desc = open((char*)e.file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IWRITE | S_IREAD);
 			if(desc < 0){
 				write(2, "Ошибка открытия файла", 41);
 				return 2;
@@ -403,6 +403,10 @@ char executecmd(const Command& cmd){
 	for(int i = 0; i < cmd.progs.size(); i++){
 		clock_t time = clock();
 		//pipe(fd[0]);
+		if(i > 1){
+			close(fd[0][0]);
+			close(fd[0][1]);
+		}
 		fd[0][0] = fd[1][0];
 		fd[0][1] = fd[1][1];
 		if(i != cmd.progs.size() - 1){
@@ -460,6 +464,14 @@ char executecmd(const Command& cmd){
 					}
 					return -1;
 				}else{
+					if(cmd.progs.size() > 1){
+							close(fd[0][0]);
+							close(fd[0][1]);
+					}
+					if(cmd.progs.size() > 0){
+							close(fd[1][0]);
+							close(fd[1][1]);
+					}
 					rusage chusage;
 					int status;
 					wait(&status);
@@ -467,7 +479,7 @@ char executecmd(const Command& cmd){
 					if ( getrusage(RUSAGE_CHILDREN, &chusage) != -1 ){
 						std::ostringstream ststm;
 						ststm << std::fixed<<std::setprecision(3);
-						ststm << "all: " << -((double)(clock() - time))/ CLOCKS_PER_SEC << "s"  <<
+						ststm << "\nall: " << -((double)(clock() - time))/ CLOCKS_PER_SEC << "s"  <<
 						 "\nsys : " << (double)chusage.ru_stime.tv_sec + (double)chusage.ru_stime.tv_usec / 1000000.0 << "s"
 						  << "\nuser" << (double)chusage.ru_utime.tv_sec + (double)chusage.ru_utime.tv_usec / 1000000.0 << "s" << "\n";
 						write(2, ststm.str().c_str(), ststm.str().size());
@@ -476,20 +488,24 @@ char executecmd(const Command& cmd){
 				
 			}
 			if(!(cmd.progs[i].progName == "pwd" || cmd.progs[i].progName == "cd" || cmd.progs[i].progName == "echo"|| cmd.progs[i].progName == "set" || cmd.progs[i].progName == "time")){
-				write(2, "not time\n", 1);
 				executearg(cmd, fd, args, 0, i);
 			}
 			return -1;
 		}
+
 		if (cmd.progs[i].progName == "cd"){
 			chdir(args[1]);
 		}
-		if (i) {
+		/*if (i) {
 			close(fd[0][0]);
 		}
 		if (i != cmd.progs.size() - 1){
 			close(fd[1][1]);
-		}
+		}*/
+	}
+	if(cmd.progs.size() > 1){
+			close(fd[0][0]);
+			close(fd[0][1]);
 	}
 	for(int i = 0; i < cmd.progs.size(); i++){
 		int status;
@@ -500,10 +516,10 @@ char executecmd(const Command& cmd){
 }
 
 void printgreating(){
-	if(geteuid() == 0){
+	if(geteuid()){
 		printf("\n%s> ", getDir().c_str());
 		fflush(stdout);
-	}else{
+	} else{
 		printf("\n%s! ", getDir().c_str());
 		fflush(stdout);
 	}
