@@ -453,10 +453,9 @@ char executecmd(const Command& cmd){
 			}
 			if (cmd.progs[i].progName == "echo"){
 				for(size_t i = 1; i < args.size() - 1; i++){
-					write(1, args[i], strlen(args[i]));
+					write(1, s_args[i].c_str(), s_args[i].size());
 					write(1, " ", 1);
 				}
-				write(1, args[args.size()], strlen(args[args.size()]));
 			}
 			if(cmd.progs[i].progName == "time"){
 				pid_t pid = fork();
